@@ -2,7 +2,7 @@
 Efficient and unique solutions to Countdown's Numbers game
 
 ## Intro
-The numbers game on the British TV show [Countdown](https://en.wikipedia.org/wiki/Countdown_(game_show)
+The numbers game on the British TV show [Countdown](https://en.wikipedia.org/wiki/Countdown_(game_show))
 involves attempting to combine positive integers into a target number
 using addition, positive subtraction, multiplication and division
 without remainder. The problem is interesting computationally, even though
@@ -11,7 +11,7 @@ the subset-sum problem. A naive solution is easy to implement, but is
 very inefficient and takes time even for small input sizes. Improvements
 can be made by restricting the set of arithmetic expressions being considered,
 and some such improvements were suggested in literature (Alliot 2015,
-[arXiv](https://arxiv.org/abs/1502.05450), but there is more that can be done.
+[arXiv](https://arxiv.org/abs/1502.05450)) but there is more that can be done.
 The rapidly inflating number of possible expressions is the main source
 of complexity, so we should aim to exclude all redundancies.
 
@@ -29,8 +29,10 @@ multiplying/dividing with 1, additions like `a/d+b/d` or `b-a=a`.
 Excluding those cases is not enough, as it would still not exclude e.g. `a/d+c+b/d`.
 Therefore we can use a dictionary that map masks (vectors that enumerate
 how many copies of each input were used; this can be a simple bitmask if
-there are not duplicates) to each value that was found. This is the
-most expensive part of the program and we may explore the possiblity
+there are no duplicates) to each value that was found.
+Then, a solution will be exluded if there is already a solution
+whose mask is a proper subset of the former's mask.
+This is the most expensive part of the program and we may explore the possiblity
 of only excluding a few common possibilities like multiplying or dividing by
 1, as with smaller input sizes (which are the only option anyway) the
 overhead may not be worth it.
@@ -56,7 +58,7 @@ gcc countdown.c -o countdown
 We input an array of integers &ndash; the first is `N`, the input size
 (e.g. 6 numbers in Countdown) followed by `Q`, the number of queries.
 The next `N` numbers are the inputs which we can use and the `Q` after that
-are the targets we wish to see solution for. Example input and output:
+are the targets we wish to see solutions for. Example input and output:
 ```
 ./countdown 6 5 100 75 50 25 6 3 952 843 112 19 10998
 ------
