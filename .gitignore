@@ -1,0 +1,8 @@
+bin/*
+*.txt
+test.c
+expr-copy.h
+.cproject
+.project
+.settings/*
+.git/*
