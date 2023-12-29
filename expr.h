@@ -12,10 +12,9 @@
 
 #include<stdlib.h>
 #include<stdio.h>
+#include<stdint.h>
 #include<stdbool.h>
 #include<omp.h>
-
-#include<string.h>
 
 #include<limits.h>
 #include<sys/resource.h>
@@ -36,105 +35,7 @@
 typedef unsigned char op_t;
 typedef unsigned long long value_t;
 typedef unsigned char count_t;
-
-/* vector */
-typedef struct Vector{
-	size_t size;
-	count_t* val;
-} Vector;
-
-Vector* vector_init(size_t size) {
-	Vector* vector = (Vector*)malloc(sizeof(Vector));
-
-	if (vector == NULL) {
-		fprintf(stderr, "Error: Memory allocation error (vector_init)\n");
-		exit(1);
-	}
-
-	vector->val = (count_t*)malloc(size * sizeof(count_t));
-
-	if (vector->val == NULL) {
-			fprintf(stderr, "Error: Memory allocation error (vector_init)\n");
-			exit(1);
-	}
-
-	memset(vector->val, 0, size * sizeof(count_t));
-	vector->size = size;
-
-	return vector;
-}
-
-void vector_sum(const Vector* a, const Vector* b, Vector* output) {
-	if (a->size == b->size && a->size == output->size) {
-		for (size_t i=0; i < a->size; ++i)
-			output->val[i] = a->val[i] + b->val[i];
-	} else {
-		fprintf(stderr, "Error: vector sizes do not match (vector_sum)\n");
-		exit(1);
-	}
-}
-
-static inline int vector_isgt_all(const Vector* a, const Vector* b) {
-	bool flag_gt = true, flag_eq = true;
-	if (a->size == b->size) {
-		for (size_t i=0; i < a->size; ++i) {
-			flag_gt &= (a->val[i] >= b->val[i]);
-			flag_eq &= (a->val[i] == b->val[i]);
-		}
-		return (int)flag_eq * 2 + (int)(flag_gt & !flag_eq);
-	} else {
-		fprintf(stderr, "Error: vector sizes do not match (vector_isgt)\n");
-		exit(1);
-	}
-}
-
-bool vector_isgt_any(const Vector* a, const Vector* b) {
-	if (a->size == b->size) {
-		bool flag = false;
-		for (size_t i=0; i < a->size; ++i)
-			flag |= (a->val[i] > b->val[i]);
-		return flag;
-	} else {
-		fprintf(stderr, "Error: vector sizes do not match (vector_isgt)\n");
-		exit(1);
-	}
-}
-
-bool vector_sumgt(const Vector* a, const Vector* b, const Vector* c) {
-	if (a -> size == b->size && c != NULL) {
-		bool flag = true;
-		for (size_t i=0; i < a->size; ++i)
-			flag &= (a->val[i] + b->val[i] < c->val[i]);
-		return flag;
-	}
-	else {
-		fprintf(stderr, "Error: vector sizes do not match (vector_sumgt)\n");
-		exit(1);
-	}
-}
-
-count_t vector_elsum(const Vector* a) {
-	count_t sum = 0;
-	for (size_t i=0; i < a->size; ++i)
-		sum += a->val[i];
-	return sum;
-}
-
-void vector_print(const Vector* vector) {
-	printf("Vector at address %p... ", vector);
-	for (size_t i=0; i<vector->size; ++i)
-		printf("%hu ", vector->val[i]);
-	printf("\n");
-}
-
-void vector_free(Vector* vector) {
-	if (vector != NULL) {
-		free(vector->val);
-		free(vector);
-	}
-}
-/* vector */
-
+typedef unsigned long long mask_t;
 
 /* map  */
 typedef struct Map{
@@ -143,7 +44,7 @@ typedef struct Map{
 
 	value_t val;
 
-	Vector** mat;
+	mask_t* masks;
 	size_t size;
 	size_t capacity;
 } Map;
@@ -162,8 +63,8 @@ Map* map_init(value_t val) {
 	map->capacity = START_SIZE_MAT_;
 
 
-	map->mat = (Vector**)malloc(START_SIZE_MAT_ * sizeof(Vector*));
-	if (map->mat == NULL) {
+	map->masks = (mask_t*)malloc(START_SIZE_MAT_ * sizeof(mask_t));
+	if (map->masks == NULL) {
 		fprintf(stderr, "Error: Memory allocation error (map_init)\n");
 		exit(1);
 	}
@@ -171,12 +72,14 @@ Map* map_init(value_t val) {
 	return map;
 }
 
-static inline bool map_insert_into_mat(Map* map, Vector* vector) {
-	bool flag_subopt = false, flag_seen = false;
+static inline bool map_insert_into_mat(Map* map, mask_t mask) {
+	bool flag_subopt = false, flag_seen = false, diff;
+	mask_t* masks = map->masks;
 	for (size_t i=0; i < map->size; ++i) {
-		int fs = vector_isgt_all(vector, map->mat[i]);
-		flag_seen |= (fs/2);
-		flag_subopt |= (fs%2);
+		diff = mask != masks[i];
+
+		flag_subopt |= (diff && mask % masks[i] == 0);
+		flag_seen |= (!diff);
 
 		if (flag_subopt)
 			break;
@@ -185,39 +88,54 @@ static inline bool map_insert_into_mat(Map* map, Vector* vector) {
 	if (!flag_subopt && !flag_seen) {
 		if (map->size == map->capacity) {
 			map->capacity *= 20;
-			map->mat = (Vector**)realloc(map->mat, map->capacity * sizeof(Vector*));
+			mask_t* temp = (mask_t*)realloc(map->masks, map->capacity * sizeof(mask_t));
 
-			if (map->mat == NULL){
+			if (temp == NULL){
+				free(map->masks);
 				fprintf(stderr, "Error: Memory allocation error (map_insert_into_mat)\n");
 				exit(1);
 			}
+
+			map->masks = temp;
 		}
 
-		map->mat[map->size++] = vector;
+		map->masks[map->size++] = mask;
 	}
 	return !flag_subopt;
 }
 
-bool map_insert(Map* map, value_t val, Vector* vector) {
+bool map_insert(Map* map, value_t val, mask_t mask) {
 	while (1) {
 		if (map->val == val)
-			return map_insert_into_mat(map, vector);
+			return map_insert_into_mat(map, mask);
 		else if (val < map->val) {
 			if (map->left != NULL)
 				map = map->left;
 			else {
 				map->left = map_init(val);
-				return map_insert_into_mat(map->left, vector);
+				return map_insert_into_mat(map->left, mask);
 			}
 		} else {
 			if (map->right != NULL)
 				map = map->right;
 			else {
 				map->right = map_init(val);
-				return map_insert_into_mat(map->right, vector);
+				return map_insert_into_mat(map->right, mask);
 			}
 		}
 	}
+}
+
+int map_heights(Map* map, int depth) {
+	if (map == NULL)
+		return -1;
+	size_t lh = 1 + map_heights(map->left, depth+1);
+	size_t rh = 1 + map_heights(map->right, depth+1);
+
+	for (int i=0; i<depth; ++i)
+		printf("\t");
+	printf("Address %p value %llu -- left: %lu, right: %lu\n", map, map->val, lh, rh);
+	return lh + rh;
 }
 
 void map_print(Map* map) {
@@ -225,9 +143,9 @@ void map_print(Map* map) {
 		return;
 	else {
 		printf("Map at address %p...\n", map);
-		printf("%llu has vectors:\n", map->val);
+		printf("%llu has masks:\n", map->val);
 		for (int i=0; i < map->size; ++i)
-			vector_print(map->mat[i]);
+			printf("%llu ", map->masks[i]);
 		printf("\n\n");
 		map_print(map->left);
 		map_print(map->right);
@@ -238,11 +156,9 @@ void map_print(Map* map) {
 
 void map_free(Map* map) {
 	if (map != NULL) {
-//		for (size_t i=0; i < map->size; ++i)
-//			vector_free(map->mat[i]);
-		free(map->mat);
 		map_free(map->left);
 		map_free(map->right);
+		free(map->masks);
 		free(map);
 	}
 }
@@ -252,13 +168,13 @@ void map_free(Map* map) {
 /* expression */
 typedef struct ExprTree{
 	value_t val;
-	Vector* vector;
+	mask_t mask;
 	struct ExprTree* left;
 	op_t o;
 	struct ExprTree* right;
 } ExprTree;
 
-ExprTree* exprtree_init(value_t val, Vector* vector) {
+ExprTree* exprtree_init(value_t val, mask_t mask) {
 	ExprTree* expr = (ExprTree*)malloc(sizeof(ExprTree));
 	if (expr == NULL) {
 		fprintf(stderr, "Error: Memory allocation error (ExprTree)\n");
@@ -266,7 +182,7 @@ ExprTree* exprtree_init(value_t val, Vector* vector) {
 	}
 
 	expr->val = val;
-	expr->vector = vector;
+	expr->mask = mask;
 	expr->left = NULL;
 	expr->right = NULL;
 	expr->o = 0;
@@ -300,9 +216,8 @@ void exprtree_printexpr(const ExprTree* expr) {
 
 void exprtree_free(ExprTree* expr) {
 	if (expr != NULL) {
-		vector_free(expr->vector);
-//		exprtree_free(expr->left);
-//		exprtree_free(expr->right);
+		exprtree_free(expr->left);
+		exprtree_free(expr->right);
 		free(expr);
 	}
 }
@@ -313,7 +228,7 @@ void exprtree_free(ExprTree* expr) {
 typedef struct ExprForest{
 	ExprTree** expr;
 	Map* map;
-	Vector* maxvec;
+	mask_t maxmask;
 	size_t* jumps;
 	size_t top;
 	size_t capacity;
@@ -332,8 +247,8 @@ ExprForest* exprforest_init() {
 		exit(1);
 	}
 
-	forest->map = NULL;
-	forest->maxvec = NULL;
+	forest->map = map_init(0);
+	forest->maxmask = 1;
 	forest->jumps = NULL;
 	forest->top = 0;
 	forest->capacity = START_SIZE_;
@@ -347,55 +262,60 @@ void exprforest_print(ExprForest*);
 void exprforest_insert(ExprForest* forest, ExprTree* expr) {
 	if (forest->top == forest->capacity) {
 		forest->capacity *= 50;
-		forest->expr = (ExprTree**)realloc(forest->expr, forest->capacity * sizeof(ExprTree*));
 
-		if (forest->expr == NULL) {
+		ExprTree** temp = (ExprTree**)realloc(forest->expr, forest->capacity * sizeof(ExprTree*));
+
+		if (temp == NULL) {
+			free(forest->expr);
 			fprintf(stderr, "Error: Memory Reallocation error (exprforest_insert)\n");
 			exit(1);
 		}
+
+		forest->expr = temp;
 	}
 
 	forest->expr[forest->top++] = expr;
 }
 
 void exprforest_input(ExprForest* forest, int N, int args[]) {
-	forest->maxvec = vector_init(N);
+	int primes[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71};
 
+	/* sort in desceding order of appearances */
 	size_t u = 0;
-	count_t temp[N];
+	value_t nums[N];
+	count_t copies[N];
 
 	for (size_t i=0; i<N; ++i) {
-		bool unique_flag = 1;
 		int place = -1;
-		for (size_t j=0; j<u; ++j)
-			if (args[i] == temp[j]) {
-				unique_flag = 0;
+		for (size_t j = 0; j<u; ++j)
+			if (args[i] == nums[j])
 				place = j;
+
+		if (place == -1) {
+			nums[u] = args[i];
+			copies[u] = 1;
+			++u;
+		} else ++copies[place];
+	}
+
+	for (size_t i=0; i<u; ++i)
+		for (size_t j=i+1; j<u; ++j)
+			if (nums[i] < nums[j] && copies[i] < copies[j]) {
+				value_t temp = nums[i]; nums[i] = nums[j]; nums[j] = temp;
+				count_t temp2 = copies[i]; copies[i] = copies[j]; copies[j] = temp2;
 			}
 
-		if (unique_flag) {
-			Vector *vector = vector_init(N);
-			vector->val[u] = 1;
-
-			ExprTree* expr = exprtree_init(args[i], vector);
-			exprforest_insert(forest, expr);
-
-			forest->maxvec->val[u]++;
-			temp[u++] = args[i];
-
-		} else
-			forest->maxvec->val[place]++;
+	for (size_t i=0; i<u; ++i) {
+		ExprTree* expr = exprtree_init(nums[i], primes[i]);
+		exprforest_insert(forest, expr);
+		for (int j=0; j<copies[i]; ++j)
+			forest->maxmask *= primes[i];
 	}
 
-	forest->map = map_init(0);
+	for (size_t i=0; i < forest->top; ++i)
+		map_insert(forest->map, forest->expr[i]->val, forest->expr[i]->mask);
 
-	forest->maxvec->size = u;
-	for (size_t i=0; i < forest->top; ++i) {
-		forest->expr[i]->vector->size = u;
-		map_insert(forest->map, forest->expr[i]->val, forest->expr[i]->vector);
-	}
-
-	forest->jumps = (size_t*)malloc((N+1) * sizeof(size_t));
+	forest->jumps = (size_t*)malloc((N+2) * sizeof(size_t));
 	if (forest->jumps == NULL) {
 		fprintf(stderr, "Error: Memory allocation error (jumps)\n");
 		exit(1);
@@ -404,38 +324,49 @@ void exprforest_input(ExprForest* forest, int N, int args[]) {
 	forest->jumps[2] = u;
 }
 
-void exprforest_grow(ExprForest* forest, count_t target_sum) {
+void exprforest_grow(ExprForest* forest, count_t target_num) {
 	size_t top = forest->top;
+
+	size_t next_break = 0;
+	size_t next_break_idx = 2;
+	count_t i_sum = 0;
+
 	for (size_t i=0; i<top; ++i) {
+		if (i >= next_break) {
+			next_break = forest->jumps[next_break_idx++];
+			++i_sum;
+		}
 
 		ExprTree* first = forest->expr[i];
-		count_t i_sum = vector_elsum(first->vector);
-		size_t L = forest->jumps[target_sum - i_sum], U = forest->jumps[target_sum - i_sum + 1];
+		size_t L = forest->jumps[target_num - i_sum], U = forest->jumps[target_num - i_sum + 1];
 
 		for (size_t j=L; j<U; ++j) {
+			// if (first->mask > ULLONG_MAX / second->mask) continue;
+			mask_t combmask = first->mask * forest->expr[j]->mask;
+			if (forest->maxmask % combmask != 0)
+				continue;
+
 			ExprTree* second = forest->expr[j];
 
-			if (first->val < second->val || (first->val == second->val && first < second))
+			/* Avoid repeated dereferencing */
+			value_t first_val = first->val, second_val = second->val;
+			op_t first_o = first->o, second_o = second->o;
+
+			if (first_val < second_val || (first_val == second_val && first < second))
 				continue;
-
-			Vector* combvec = vector_init(first->vector->size);
-			vector_sum(first->vector, second->vector, combvec);
-
-			if (vector_isgt_any(combvec, forest->maxvec))
-				continue;
-
 
 			bool decreasing = first->right == NULL
 			                || first->right->val > second -> val
 			                || (first->right->val == second->val && first->right > second);
 
 			op_t o = PLUS;
-			if (first->val + second->val < THRESHOLD_ && second->o != PLUS && second->o != MINUS
-			   && ((first->o == TIMES || first->o == DIV || first->o == 0)
-			       || (first->o == PLUS && decreasing))) {
+			value_t result = first_val + second_val;
+			if (second_o != PLUS && second_o != MINUS
+			   && ((first_o == TIMES || first_o == DIV || first_o == 0)
+			       || (first_o == PLUS && decreasing))) {
 
-				if (map_insert(forest->map, first->val + second->val, combvec)) {
-					ExprTree* new_expr = exprtree_init(first->val + second->val, combvec);
+				if (result < THRESHOLD_ && map_insert(forest->map, result, combmask)) {
+					ExprTree* new_expr = exprtree_init(result, combmask);
 					new_expr->left = first;
 					new_expr->right = second;
 					new_expr->o = o;
@@ -445,12 +376,13 @@ void exprforest_grow(ExprForest* forest, count_t target_sum) {
 
 
 			o = MINUS;
-			if (first->val > second->val && second->o != PLUS && second->o != MINUS
-			   && ((first->o == PLUS || first->o == TIMES || first->o == DIV || first->o == 0)
-			       || (first->o == MINUS && decreasing))) {
+			result = first_val - second_val;
+			if (result > 0 && second_o != PLUS && second_o != MINUS
+			   && ((first_o == PLUS || first_o == TIMES || first_o == DIV || first_o == 0)
+			       || (first_o == MINUS && decreasing))) {
 
-				if (map_insert(forest->map, first->val - second->val, combvec)) {
-					ExprTree* new_expr = exprtree_init(first->val - second->val, combvec);
+				if (map_insert(forest->map, result, combmask)) {
+					ExprTree* new_expr = exprtree_init(result, combmask);
 					new_expr->left = first;
 					new_expr->right = second;
 					new_expr->o = o;
@@ -460,12 +392,13 @@ void exprforest_grow(ExprForest* forest, count_t target_sum) {
 
 
 			o = TIMES;
-			if (second->o != TIMES && second->o != DIV
-			   && ((first->o == PLUS || first->o == MINUS || first->o == 0)
-			       || (first->o == TIMES && decreasing))) {
+			result = first_val * second_val;
+			if (second_o != TIMES && second_o != DIV
+			   && ((first_o == PLUS || first_o == MINUS || first_o == 0)
+			       || (first_o == TIMES && decreasing))) {
 
-				if (first->val * second->val < THRESHOLD_ && map_insert(forest->map, first->val * second->val, combvec)) {
-					ExprTree* new_expr = exprtree_init(first->val * second->val, combvec);
+				if (result < THRESHOLD_ && map_insert(forest->map, result, combmask)) {
+					ExprTree* new_expr = exprtree_init(result, combmask);
 					new_expr->left = first;
 					new_expr->right = second;
 					new_expr->o = o;
@@ -475,12 +408,13 @@ void exprforest_grow(ExprForest* forest, count_t target_sum) {
 
 
 			o = DIV;
-			if (first->val % second->val == 0 && second->o != TIMES && second->o != DIV
-			   && ((first->o == PLUS || first->o == MINUS || first->o == TIMES || first->o == 0)
-			       || (first->o == DIV && decreasing))) {
+			result = first_val / second_val;
+			if (first_val % second_val == 0 && second_o != TIMES && second_o != DIV
+			   && ((first_o == PLUS || first_o == MINUS || first_o == TIMES || first_o == 0)
+			       || (first_o == DIV && decreasing))) {
 
-				if (map_insert(forest->map, first->val / second->val, combvec)) {
-					ExprTree* new_expr = exprtree_init(first->val / second->val, combvec);
+				if (map_insert(forest->map, result, combmask)) {
+					ExprTree* new_expr = exprtree_init(result, combmask);
 					new_expr->left = first;
 					new_expr->right = second;
 					new_expr->o = o;
@@ -499,7 +433,7 @@ void exprforest_grow(ExprForest* forest, count_t target_sum) {
 			}
 		}
 	}
-	forest->jumps[target_sum + 1] = forest->top;
+	forest->jumps[target_num + 1] = forest->top;
 }
 
 void exprforest_query(const ExprForest* forest, value_t query) {
@@ -520,7 +454,7 @@ void exprforest_print(ExprForest* forest) {
 	for (size_t i=0; i<forest->top; ++i) {
 		printf("\tExpression with value %llu\n", forest->expr[i]->val);
 		printf("\tHas ");
-		vector_print(forest->expr[i]->vector);
+		printf("%llu\n", forest->expr[i]->mask);
 		printf("\t");
 		exprtree_printexpr(forest->expr[i]);
 		printf("\n\n");
@@ -529,14 +463,10 @@ void exprforest_print(ExprForest* forest) {
 
 void exprforest_free(ExprForest* forest) {
 	for (size_t i=0; i < forest->top; ++i)
-		forest->expr[i]->vector->val[0] = i;
-	for (size_t i=0; i < forest->top; ++i)
-		if (i == forest->expr[i]->vector->val[0])
-			vector_free(forest->expr[i]->vector);
-
+		free(forest->expr[i]);
 	free(forest->expr);
 	map_free(forest->map);
-	vector_free(forest->maxvec);
+	free(forest->jumps);
 	free(forest);
 }
 /* forest */
