@@ -50,20 +50,21 @@ int main(int argc, char* argv[]){
 	for (int i=0; i<N-1; ++i)
 		exprforest_grow(forest, i+2);
 
+	clock_t end = clock();
+	double time = (double)(end-start)/CLOCKS_PER_SEC;
+
 	for (size_t i=0; i<Q; ++i) {
 		q = atoi(argv[3+N+i]);
 		exprforest_query(forest, q);
 	}
 
-	printf("%zu solutions found in total.\n", forest->top);
-	clock_t end = clock();
-	double time = (double)(end-start)/CLOCKS_PER_SEC;
-	printf("Time:%lf seconds", time);
-	if (time < 1.0)
-		printf(" (%lf miliseconds)\n", time*1000.0);
+	printf("Time: %lf seconds", time);
+	if (time < 1.0) 
+		printf(" (%lf miliseconds)\n", time * 1000.0);
 	else
 		printf("\n");
 
+	printf("Found %d solutions in total.\n", exprforest_count(forest));
 	exprforest_free(forest);
 	printf("Memory freed successfully.\n");
 	return 0;
